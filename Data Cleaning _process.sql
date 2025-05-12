@@ -1,177 +1,328 @@
--- DATA CLEANING IN SQL
--- STEPS : 1. REMOVE DUPLICATES
---         2. STANDARDIZE THE DATA
---         3. REMOVE NULL VALUES AND BLANK VALUES
---         4. REMOVE ANY COLUMNS AND ROWS WHICH ARE NOT NECESSARY
+
+-- SQL Project - Data Cleaning
+
+-- https://www.kaggle.com/datasets/swaptr/layoffs-2022
 
 
-select count(*) from layoffs;
 
-select * from layoffs;
 
--- pre-req. Create Staging table for backup-- 
 
-Create table staging
-like layoffs;
 
--- Insert data into Staging table
-Insert into staging
-select * from layoffs;
+SELECT * 
+FROM world_layoffs.layoffs;
 
-select * from staging;
 
-select count(*) from staging;
 
--- 1. Remove the duplicates-- 
+-- first thing we want to do is create a staging table. This is the one we will work in and clean the data. We want a table with the raw data in case something happens
+CREATE TABLE world_layoffs.layoffs_staging 
+LIKE world_layoffs.layoffs;
 
-select *, row_number() OVER (
-partition by COMPANY, LOCATION, INDUSTRY, total_laid_off , percentage_laid_off , `DATE` , STAGE,  COUNTRY, funds_raised_millions )
-AS ROW_NUM from staging 
-ORDER BY ROW_NUM DESC;
+INSERT layoffs_staging 
+SELECT * FROM world_layoffs.layoffs;
 
-WITH duplicate_cte as 
-(select *, row_number() OVER (
-partition by COMPANY, LOCATION, INDUSTRY, total_laid_off , percentage_laid_off , `DATE` , STAGE,  COUNTRY, funds_raised_millions )
-AS ROW_NUM from staging)
-delete from duplicate_cte
-where row_num >1;
 
--- --we cannot able to delete over CTE so we are creating another table and adding row_num column extra and removing 
--- dublicates form that table 
+-- now when we are data cleaning we usually follow a few steps
+-- 1. check for duplicates and remove any
+-- 2. standardize data and fix errors
+-- 3. Look at null values and see what 
+-- 4. remove any columns and rows that are not necessary - few ways
 
-CREATE TABLE `staging2` (
-  `company` text,
-  `location` text,
-  `industry` text,
-  `total_laid_off` int DEFAULT NULL,
-  `percentage_laid_off` text,
-  `date` text,
-  `stage` text,
-  `country` text,
-  `funds_raised_millions` int DEFAULT NULL,
-  `ROW_NUM` int 
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- --staging table 2 is created now , insert the CTE data into staging2  
-select * from staging2;
 
-insert into staging2
-select *, row_number() OVER (
-partition by COMPANY, LOCATION, INDUSTRY, total_laid_off , percentage_laid_off , `DATE` , STAGE,  COUNTRY, funds_raised_millions )
-AS ROW_NUM from staging;
+-- 1. Remove Duplicates
 
--- Row_num is added  ,now we can remove duplicates easily-- 
+# First let's check for duplicates
 
-SELECT * FROM staging2
-WHERE ROW_NUM >1;
 
-DELETE FROM STAGING2
-WHERE ROW_NUM>1;
 
--- --2. STANDARDIZING THE DATA--
+SELECT *
+FROM world_layoffs.layoffs_staging
+;
 
--- COMPANY COLUMN
-SELECT company FROM staging2;
+SELECT company, industry, total_laid_off,`date`,
+		ROW_NUMBER() OVER (
+			PARTITION BY company, industry, total_laid_off,`date`) AS row_num
+	FROM 
+		world_layoffs.layoffs_staging;
 
-UPDATE staging2
-SET COMPANY = trim(COMPANY);
 
--- INDUSTRY COLUMN
-SELECT DISTINCT INDUSTRY FROM staging2
-ORDER BY 1 ;
 
-SELECT INDUSTRY FROM staging2
-WHERE INDUSTRY LIKE "CRYPTO%";
+SELECT *
+FROM (
+	SELECT company, industry, total_laid_off,`date`,
+		ROW_NUMBER() OVER (
+			PARTITION BY company, industry, total_laid_off,`date`
+			) AS row_num
+	FROM 
+		world_layoffs.layoffs_staging
+) duplicates
+WHERE 
+	row_num > 1;
+    
+-- let's just look at oda to confirm
+SELECT *
+FROM world_layoffs.layoffs_staging
+WHERE company = 'Oda'
+;
+-- it looks like these are all legitimate entries and shouldn't be deleted. We need to really look at every single row to be accurate
 
-UPDATE STAGING2
-SET INDUSTRY = "CRYPTO"
-WHERE INDUSTRY LIKE "CRYPTO%";
+-- these are our real duplicates 
+SELECT *
+FROM (
+	SELECT company, location, industry, total_laid_off,percentage_laid_off,`date`, stage, country, funds_raised_millions,
+		ROW_NUMBER() OVER (
+			PARTITION BY company, location, industry, total_laid_off,percentage_laid_off,`date`, stage, country, funds_raised_millions
+			) AS row_num
+	FROM 
+		world_layoffs.layoffs_staging
+) duplicates
+WHERE 
+	row_num > 1;
 
--- LOCATION COLUMN
-SELECT * FROM STAGING2;
+-- these are the ones we want to delete where the row number is > 1 or 2or greater essentially
 
-SELECT DISTINCT LOCATION
-FROM staging2
-ORDER BY 1;
+-- now you may want to write it like this:
+WITH DELETE_CTE AS 
+(
+SELECT *
+FROM (
+	SELECT company, location, industry, total_laid_off,percentage_laid_off,`date`, stage, country, funds_raised_millions,
+		ROW_NUMBER() OVER (
+			PARTITION BY company, location, industry, total_laid_off,percentage_laid_off,`date`, stage, country, funds_raised_millions
+			) AS row_num
+	FROM 
+		world_layoffs.layoffs_staging
+) duplicates
+WHERE 
+	row_num > 1
+)
+DELETE
+FROM DELETE_CTE
+;
 
--- COUNTRY COLUMN
-SELECT distinct COUNTRY
-FROM staging2
-ORDER BY 1;
 
-SELECT DISTINCT COUNTRY FROM STAGING2
-WHERE COUNTRY LIKE "UNITED STATES%";
+WITH DELETE_CTE AS (
+	SELECT company, location, industry, total_laid_off, percentage_laid_off, `date`, stage, country, funds_raised_millions, 
+    ROW_NUMBER() OVER (PARTITION BY company, location, industry, total_laid_off, percentage_laid_off, `date`, stage, country, funds_raised_millions) AS row_num
+	FROM world_layoffs.layoffs_staging
+)
+DELETE FROM world_layoffs.layoffs_staging
+WHERE (company, location, industry, total_laid_off, percentage_laid_off, `date`, stage, country, funds_raised_millions, row_num) IN (
+	SELECT company, location, industry, total_laid_off, percentage_laid_off, `date`, stage, country, funds_raised_millions, row_num
+	FROM DELETE_CTE
+) AND row_num > 1;
 
-UPDATE staging2
-SET COUNTRY = "United States"
-WHERE COUNTRY ="United States.";
+-- one solution, which I think is a good one. Is to create a new column and add those row numbers in. Then delete where row numbers are over 2, then delete that column
+-- so let's do it!!
 
--- STAGE COLUMN-- 
-SELECT * FROM STAGING2;
-SELECT DISTINCT STAGE FROM staging
-ORDER BY 1;
+ALTER TABLE world_layoffs.layoffs_staging ADD row_num INT;
 
--- DATE COLUMN
-SELECT distinct `DATE` FROM STAGING2
-ORDER BY 1;
 
-SELECT `DATE` , str_to_date(`DATE`, '%m/%d/%Y') FROM staging2;
+SELECT *
+FROM world_layoffs.layoffs_staging
+;
 
-UPDATE STAGING2
-SET `DATE` = TRIM(str_to_date(`DATE`, '%m/%d/%Y'));
+CREATE TABLE `world_layoffs`.`layoffs_staging2` (
+`company` text,
+`location`text,
+`industry`text,
+`total_laid_off` INT,
+`percentage_laid_off` text,
+`date` text,
+`stage`text,
+`country` text,
+`funds_raised_millions` int,
+row_num INT
+);
 
-SELECT `DATE` FROM STAGING2;
+INSERT INTO `world_layoffs`.`layoffs_staging2`
+(`company`,
+`location`,
+`industry`,
+`total_laid_off`,
+`percentage_laid_off`,
+`date`,
+`stage`,
+`country`,
+`funds_raised_millions`,
+`row_num`)
+SELECT `company`,
+`location`,
+`industry`,
+`total_laid_off`,
+`percentage_laid_off`,
+`date`,
+`stage`,
+`country`,
+`funds_raised_millions`,
+		ROW_NUMBER() OVER (
+			PARTITION BY company, location, industry, total_laid_off,percentage_laid_off,`date`, stage, country, funds_raised_millions
+			) AS row_num
+	FROM 
+		world_layoffs.layoffs_staging;
 
--- CHANGING THE DATA TYPE OF THE DATA ITS TEXT FORMAT NOW CHANGING TO DATE FORMAT
-ALTER TABLE STAGING2
-CHANGE `DATE` `DATE` DATE;
+-- now that we have this we can delete rows were row_num is greater than 2
 
--- SOME OF INDUSTRY VALUES ARE NULL FOR SAME COMPANY UPDATE THE CORRECT INDUSTRY FOR NULL OR BLANK 
+DELETE FROM world_layoffs.layoffs_staging2
+WHERE row_num >= 2;
 
-select * from staging2
-WHERE INDUSTRY IS NULL OR INDUSTRY = '';
 
-UPDATE STAGING2
-SET INDUSTRY  = null
-WHERE INDUSTRY = '';
 
--- FINDING THE INDUSTRY HAVE BLANK IN T1 BUT NOT IN T2 FOR THR SAME COMPANY-- 
 
-SELECT T1.COMPANY, T1.INDUSTRY , T2.INDUSTRY
-FROM STAGING2 T1
-JOIN STAGING2 T2
-   ON T1.COMPANY = T2.COMPANY
-WHERE (T1.INDUSTRY IS NULL OR T1.INDUSTRY = '')
-     AND T2.INDUSTRY IS NOT NULL;
-     
--- UPDATING T1 INDUSTRY VALUE TO T2 INDUSTRY VALUES 
 
-UPDATE staging2 T1
-JOIN staging2 T2 
-	ON T1.COMPANY = T2.COMPANY
-SET T1.INDUSTRY = T2.INDUSTRY 
-WHERE T1.INDUSTRY IS NULL
-AND T2.INDUSTRY IS NOT NULL;
 
-SELECT * FROM STAGING2
-WHERE COMPANY = 'AIRBNB';
 
--- 3. REMOVE THE ROWS FOR PERCENTAGE_LAID OFF AND TOTAL_LAID_OFF ARE BLANK
+-- 2. Standardize Data
 
-SELECT * FROM STAGING2
-WHERE percentage_laid_off IS NULL AND total_laid_oFF IS NULL;
+SELECT * 
+FROM world_layoffs.layoffs_staging2;
 
-DELETE FROM STAGING2
-WHERE percentage_laid_off IS NULL AND total_laid_oFF IS NULL; 
+-- if we look at industry it looks like we have some null and empty rows, let's take a look at these
+SELECT DISTINCT industry
+FROM world_layoffs.layoffs_staging2
+ORDER BY industry;
 
--- 4. REMOVE THE ROWNUM COLUMN WHICH IS NOT NECESSARY NOW
-ALTER TABLE STAGING2
-DROP COLUMN ROW_NUM;
+SELECT *
+FROM world_layoffs.layoffs_staging2
+WHERE industry IS NULL 
+OR industry = ''
+ORDER BY industry;
 
-SELECT * FROM STAGING2
-where `date` is null;
+-- let's take a look at these
+SELECT *
+FROM world_layoffs.layoffs_staging2
+WHERE company LIKE 'Bally%';
+-- nothing wrong here
+SELECT *
+FROM world_layoffs.layoffs_staging2
+WHERE company LIKE 'airbnb%';
 
-commit;
+-- it looks like airbnb is a travel, but this one just isn't populated.
+-- I'm sure it's the same for the others. What we can do is
+-- write a query that if there is another row with the same company name, it will update it to the non-null industry values
+-- makes it easy so if there were thousands we wouldn't have to manually check them all
+
+-- we should set the blanks to nulls since those are typically easier to work with
+UPDATE world_layoffs.layoffs_staging2
+SET industry = NULL
+WHERE industry = '';
+
+-- now if we check those are all null
+
+SELECT *
+FROM world_layoffs.layoffs_staging2
+WHERE industry IS NULL 
+OR industry = ''
+ORDER BY industry;
+
+-- now we need to populate those nulls if possible
+
+UPDATE layoffs_staging2 t1
+JOIN layoffs_staging2 t2
+ON t1.company = t2.company
+SET t1.industry = t2.industry
+WHERE t1.industry IS NULL
+AND t2.industry IS NOT NULL;
+
+-- and if we check it looks like Bally's was the only one without a populated row to populate this null values
+SELECT *
+FROM world_layoffs.layoffs_staging2
+WHERE industry IS NULL 
+OR industry = ''
+ORDER BY industry;
+
+-- ---------------------------------------------------
+
+-- I also noticed the Crypto has multiple different variations. We need to standardize that - let's say all to Crypto
+SELECT DISTINCT industry
+FROM world_layoffs.layoffs_staging2
+ORDER BY industry;
+
+UPDATE layoffs_staging2
+SET industry = 'Crypto'
+WHERE industry IN ('Crypto Currency', 'CryptoCurrency');
+
+-- now that's taken care of:
+SELECT DISTINCT industry
+FROM world_layoffs.layoffs_staging2
+ORDER BY industry;
+
+-- --------------------------------------------------
+-- we also need to look at 
+
+SELECT *
+FROM world_layoffs.layoffs_staging2;
+
+-- everything looks good except apparently we have some "United States" and some "United States." with a period at the end. Let's standardize this.
+SELECT DISTINCT country
+FROM world_layoffs.layoffs_staging2
+ORDER BY country;
+
+UPDATE layoffs_staging2
+SET country = TRIM(TRAILING '.' FROM country);
+
+-- now if we run this again it is fixed
+SELECT DISTINCT country
+FROM world_layoffs.layoffs_staging2
+ORDER BY country;
+
+
+-- Let's also fix the date columns:
+SELECT *
+FROM world_layoffs.layoffs_staging2;
+
+-- we can use str to date to update this field
+UPDATE layoffs_staging2
+SET `date` = STR_TO_DATE(`date`, '%m/%d/%Y');
+
+-- now we can convert the data type properly
+ALTER TABLE layoffs_staging2
+MODIFY COLUMN `date` DATE;
+
+
+SELECT *
+FROM world_layoffs.layoffs_staging2;
+
+
+
+
+
+-- 3. Look at Null Values
+
+-- the null values in total_laid_off, percentage_laid_off, and funds_raised_millions all look normal. I don't think I want to change that
+-- I like having them null because it makes it easier for calculations during the EDA phase
+
+-- so there isn't anything I want to change with the null values
+
+
+
+
+-- 4. remove any columns and rows we need to
+
+SELECT *
+FROM world_layoffs.layoffs_staging2
+WHERE total_laid_off IS NULL;
+
+
+SELECT *
+FROM world_layoffs.layoffs_staging2
+WHERE total_laid_off IS NULL
+AND percentage_laid_off IS NULL;
+
+-- Delete Useless data we can't really use
+DELETE FROM world_layoffs.layoffs_staging2
+WHERE total_laid_off IS NULL
+AND percentage_laid_off IS NULL;
+
+SELECT * 
+FROM world_layoffs.layoffs_staging2;
+
+ALTER TABLE layoffs_staging2
+DROP COLUMN row_num;
+
+
+SELECT * 
+FROM world_layoffs.layoffs_staging2;
 
 
 
