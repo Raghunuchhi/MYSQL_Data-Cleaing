@@ -6,6 +6,15 @@
 
 -- with this info we are just going to look around and see what we find!
 
+Business Problems
+1.Which companies experienced the highest number of layoffs?
+2.Which countries and industries were most impacted by layoffs?
+3.Which companies laid off 100% of their workforce, and how much funding had they raised?
+4.What were the yearly trends in layoffs, and which companies topped layoffs each year?
+5.What are the top locations affected by layoffs over the past few years?
+6.How did total layoffs change over time on a monthly basis (rolling trend analysis)?
+
+
 SELECT * 
 FROM world_layoffs.layoffs_staging2;
 
